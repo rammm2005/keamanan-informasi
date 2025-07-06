@@ -8,12 +8,11 @@ from Crypto.Random import get_random_bytes
 
 
 class TripleDESPage(tk.Frame):
-    def __init__(self, parent, controller, crypto: TripleDES, bot_token: str, chat_id: str):
+    def __init__(self, parent, controller, crypto: TripleDES, bot_token: str):
         super().__init__(parent, bg="#f0f2f5")
         self.controller = controller
         self.crypto = crypto
         self.bot_token = bot_token
-        self.chat_id = chat_id
         self._create_widgets()
 
     def _create_widgets(self):
@@ -29,6 +28,13 @@ class TripleDESPage(tk.Frame):
         mode_combo = ttk.Combobox(frame, textvariable=self.mode_var,
                                   values=["EDE", "EED", "DEE", "DED"], state="readonly")
         mode_combo.pack(pady=(0, 10))
+
+        ttk.Label(frame, text="Telegram Chat ID:").pack(anchor="w", pady=(5, 5))
+        self.chat_id_entry = ttk.Entry(frame, font=("Segoe UI", 10))
+        self.chat_id_entry.pack(fill="x", pady=(0, 10))
+
+        info_label = ttk.Label(frame, text="📌 Untuk mendapatkan Chat ID, kirim pesan ke @userinfobot di Telegram.", font=("Segoe UI", 9), foreground="gray")
+        info_label.pack(anchor="w", pady=(0, 10))
 
         button_frame = ttk.Frame(frame)
         button_frame.pack(pady=10)
@@ -73,13 +79,14 @@ class TripleDESPage(tk.Frame):
         try:
             mode = self.mode_var.get()
             text = self.input_text.get("1.0", tk.END).strip()
+            chat_id = self.chat_id_entry.get().strip()
 
-            if not text:
-                raise ValueError("Pesan harus diisi.")
+            if not text or not chat_id:
+                raise ValueError("Pesan dan Chat ID harus diisi.")
 
             result = self.crypto.encrypt(text, mode)
             full_message = f"🔐 Enkripsi ({mode}):\n{result}"
-            send_to_telegram(self.bot_token, self.chat_id, full_message)
+            send_to_telegram(self.bot_token, chat_id, full_message)
             messagebox.showinfo("Sukses", "Pesan terenkripsi berhasil dikirim ke Telegram!")
         except Exception as e:
             messagebox.showerror("Gagal Kirim Telegram", str(e))
@@ -116,7 +123,6 @@ class App(tk.Tk):
 
         load_dotenv()
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
         key1, key2, key3 = get_random_bytes(8), get_random_bytes(8), get_random_bytes(8)
         crypto = TripleDES(key1, key2, key3)
@@ -126,7 +132,7 @@ class App(tk.Tk):
             self.frames[F] = frame
             frame.place(relwidth=1, relheight=1)
 
-        triple_des_page = TripleDESPage(self.container, self, crypto, bot_token, chat_id)
+        triple_des_page = TripleDESPage(self.container, self, crypto, bot_token)
         self.frames[TripleDESPage] = triple_des_page
         triple_des_page.place(relwidth=1, relheight=1)
 
