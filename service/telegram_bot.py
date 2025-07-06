@@ -21,6 +21,7 @@ from Crypto.Util.Padding import pad, unpad
 
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+print(f"BOT_TOKEN = {BOT_TOKEN!r}")
 
 
 class TripleDES:
