@@ -21,46 +21,77 @@ from Crypto.Util.Padding import pad, unpad
 
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
 print(f"BOT_TOKEN = {BOT_TOKEN!r}")
 
+# ----------------------------- TripleDES -----------------------------
 
 class TripleDES:
-    def __init__(self, k1, k2, k3):
-        self.key = k1 + k2 + k3
-        self.cipher = DES3.new(self.key, DES3.MODE_ECB)
+    def __init__(self, k1, k2, k3, mode='EDE'):
+        self.keys = [k1, k2, k3]
+        self.mode = mode  # 'EDE', 'EED', 'DEE'
+
+    def _apply_3des(self, data: bytes, encrypt=True) -> bytes:
+        rounds = []
+        for i, letter in enumerate(self.mode):
+            if letter == 'E':
+                rounds.append( (self.keys[i], True) )
+            elif letter == 'D':
+                rounds.append( (self.keys[i], False) )
+
+        result = data
+        for key, is_enc in rounds:
+            cipher = DES3.new(key*3, DES3.MODE_ECB)  # repeat 8-byte key to 24 bytes
+            if encrypt:
+                if is_enc:
+                    result = cipher.encrypt(pad(result, 8))
+                else:
+                    result = unpad(cipher.decrypt(result), 8)
+            else:
+                if is_enc:
+                    result = unpad(cipher.decrypt(result), 8)
+                else:
+                    result = cipher.encrypt(pad(result, 8))
+        return result
 
     def encrypt(self, plaintext: str) -> str:
+        iv = get_random_bytes(8)
         data = plaintext.encode()
+        cipher = DES3.new(self.keys[0]+self.keys[1]+self.keys[2], DES3.MODE_CBC, iv)
         padded = pad(data, DES3.block_size)
-        return self.cipher.encrypt(padded).hex()
+        ct = cipher.encrypt(padded)
+        return (iv + ct).hex()
 
     def decrypt(self, ciphertext_hex: str) -> str:
         data = bytes.fromhex(ciphertext_hex)
-        decrypted = self.cipher.decrypt(data)
-        return unpad(decrypted, DES3.block_size).decode()
+        iv, ct = data[:8], data[8:]
+        cipher = DES3.new(self.keys[0]+self.keys[1]+self.keys[2], DES3.MODE_CBC, iv)
+        pt = unpad(cipher.decrypt(ct), DES3.block_size)
+        return pt.decode()
 
-    def encrypt_bytes(self, data: bytes) -> bytes:
-        padded = pad(data, DES3.block_size)
-        return self.cipher.encrypt(padded)
-
-    def decrypt_bytes(self, data: bytes) -> bytes:
-        decrypted = self.cipher.decrypt(data)
-        return unpad(decrypted, DES3.block_size)
-
+# ----------------------------- Global State -----------------------------
 
 key1, key2, key3 = get_random_bytes(8), get_random_bytes(8), get_random_bytes(8)
-crypto = TripleDES(key1, key2, key3)
+
+crypto_mode = 'EDE'
+crypto = TripleDES(key1, key2, key3, crypto_mode)
 
 user_mode: dict[int, str] = {}
 user_text: dict[int, str] = {}
 user_filename: dict[int, str] = {}
 
+# ----------------------------- Helpers -----------------------------
 
 def mode_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🔒 Enkripsi", callback_data="set_encrypt"),
             InlineKeyboardButton("🔓 Dekripsi", callback_data="set_decrypt")
+        ],
+        [
+            InlineKeyboardButton("⚙️ EED", callback_data="set_EED"),
+            InlineKeyboardButton("⚙️ DEE", callback_data="set_DEE"),
+            InlineKeyboardButton("⚙️ EDE", callback_data="set_EDE")
         ]
     ])
 
@@ -73,37 +104,41 @@ async def safe_edit_or_send(query, context, text, **kwargs):
     except telegram.error.BadRequest:
         await context.bot.send_message(chat_id=query.message.chat_id, text=text, **kwargs)
 
+# ----------------------------- Handlers -----------------------------
 
 async def start(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Selamat datang di *Bot 3DES!*\n\n"
         "Silakan pilih mode yang ingin digunakan, atau kirim langsung `/encrypt teks` atau `/decrypt ciphertext`.\n\n"
-        "📄 Kamu juga bisa kirim file.",
+        "📄 Kamu juga bisa kirim file.\n\n"
+        f"🔁 Mode kunci saat ini: `{crypto.mode}`",
         reply_markup=mode_keyboard(),
         parse_mode=ParseMode.MARKDOWN
     )
-
 
 async def mode_chosen(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     chat_id = query.message.chat_id
 
-    if query.data == "set_encrypt":
-        user_mode[chat_id] = "encrypt"
+    if query.data in ["set_encrypt", "set_decrypt"]:
+        user_mode[chat_id] = query.data.replace("set_", "")
+        mode_label = "Enkripsi" if user_mode[chat_id] == "encrypt" else "Dekripsi"
         await safe_edit_or_send(
             query, context,
-            "✅ Mode: *Enkripsi*\n\nSilakan kirim teks atau file.",
+            f"✅ Mode: *{mode_label}*\n\nSilakan kirim teks atau file.",
             parse_mode=ParseMode.MARKDOWN
         )
-    elif query.data == "set_decrypt":
-        user_mode[chat_id] = "decrypt"
+    elif query.data.startswith("set_"):
+        global crypto_mode, crypto
+        crypto_mode = query.data.replace("set_", "")
+        crypto = TripleDES(key1, key2, key3, crypto_mode)
         await safe_edit_or_send(
             query, context,
-            "✅ Mode: *Dekripsi*\n\nSilakan kirim teks atau file terenkripsi.",
+            f"✅ Mode kunci diubah ke: `{crypto_mode}`",
+            reply_markup=mode_keyboard(),
             parse_mode=ParseMode.MARKDOWN
         )
-
 
 async def text_received(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -112,7 +147,7 @@ async def text_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
 
     if not mode:
         await update.message.reply_text(
-            "⚠️ Pilih mode dulu dengan /start atau gunakan `/encrypt teks` atau `/decrypt ciphertext`.",
+            "⚠️ Pilih mode dulu dengan /start atau gunakan tombol di bawah.",
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -130,7 +165,6 @@ async def text_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN
     )
-
 
 async def process(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -158,8 +192,8 @@ async def process(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ *Hasil {mode}:*\n\n"
             f"`{result}`\n\n"
             f"⏱️ Waktu proses: `{elapsed:.4f} detik`\n"
-            f"⏱️ Waktu proses (Milisecond): `{elapsed*1000:.3f} ms`\n"
             f"🕒 Waktu: `{timestamp}`\n\n"
+            f"🔁 Mode kunci saat ini: `{crypto.mode}`\n"
             "Pilih mode lain jika ingin:",
             reply_markup=mode_keyboard(),
             parse_mode=ParseMode.MARKDOWN
@@ -172,8 +206,6 @@ async def process(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
 
-
-
 async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     mode = user_mode.get(chat_id)
@@ -185,14 +217,11 @@ async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
         )
         return
 
+    document = None
     if update.message.document:
         document = update.message.document
-        file = await document.get_file()
-        orig_name = document.file_name or "file"
     elif update.message.photo:
         document = update.message.photo[-1]
-        file = await document.get_file()
-        orig_name = f"photo_{chat_id}.jpg"
     else:
         await update.message.reply_text(
             "⚠️ Tidak ada file ditemukan.",
@@ -200,8 +229,10 @@ async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    user_filename[chat_id] = orig_name
+    file = await document.get_file()
+    orig_name = getattr(document, 'file_name', f"photo_{chat_id}.jpg")
 
+    user_filename[chat_id] = orig_name
     file_path = f"temp_{chat_id}.bin"
     await file.download_to_drive(file_path)
 
@@ -213,14 +244,11 @@ async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
 
     try:
         if mode == "encrypt":
-            result_data = crypto.encrypt_bytes(data)
+            result_data = bytes.fromhex(crypto.encrypt(data.decode(errors='ignore')))
             out_name = f"{orig_name}.3des"
         elif mode == "decrypt":
-            result_data = crypto.decrypt_bytes(data)
-            if orig_name.endswith(".3des"):
-                out_name = orig_name[:-5]
-            else:
-                out_name = f"decrypted_{orig_name}"
+            result_data = crypto.decrypt(data.decode(errors='ignore')).encode()
+            out_name = orig_name.replace(".3des", "")
         elapsed = time.time() - start_time
     except Exception as e:
         await update.message.reply_text(
@@ -240,7 +268,7 @@ async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
         filename=out_name,
         caption=(
             f"✅ File hasil *{mode}* selesai dalam `{elapsed:.4f} detik`\n\n"
-            "Pilih mode lain jika ingin:"
+            f"🔁 Mode kunci saat ini: `{crypto.mode}`"
         ),
         reply_markup=mode_keyboard(),
         parse_mode=ParseMode.MARKDOWN
@@ -249,6 +277,7 @@ async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
     os.remove(file_path)
     os.remove(out_path)
 
+# ----------------------------- Main -----------------------------
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
