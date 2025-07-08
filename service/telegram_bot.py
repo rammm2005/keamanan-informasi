@@ -186,10 +186,18 @@ async def process(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_or_send(query, context, "⚠️ Tidak ada teks atau mode.")
         return
 
-    crypto = user_crypto[chat_id]
     timestamp = now_time()
     mode_label = "Enkripsi" if mode == "encrypt" else "Dekripsi"
-    info_key = f"🔑 Kunci: `{user_keys[chat_id].hex()}`\n\n"
+
+    if mode == "encrypt":
+        key_24 = get_random_bytes(24)
+        user_keys[chat_id] = key_24
+        user_crypto[chat_id] = TripleDES(key_24, user_crypto_mode[chat_id])
+        crypto = user_crypto[chat_id]
+        info_key = f"🆕 Kunci baru: `{key_24.hex()}`\n\n"
+    else:
+        crypto = user_crypto[chat_id]
+        info_key = f"🔑 Kunci: `{user_keys[chat_id].hex()}`\n\n"
 
     start_time = time.perf_counter()
     try:
@@ -243,8 +251,15 @@ async def file_received(update: telegram.Update, context: ContextTypes.DEFAULT_T
     file_path = f"temp_{chat_id}.bin"
     await file.download_to_drive(file_path)
 
-    crypto = user_crypto[chat_id]
-    info_key = f"🔑 Kunci: `{user_keys[chat_id].hex()}`\n"
+    if mode == "encrypt":
+        key_24 = get_random_bytes(24)
+        user_keys[chat_id] = key_24
+        user_crypto[chat_id] = TripleDES(key_24, user_crypto_mode[chat_id])
+        crypto = user_crypto[chat_id]
+        info_key = f"🆕 Kunci baru: `{key_24.hex()}`\n"
+    else:
+        crypto = user_crypto[chat_id]
+        info_key = f"🔑 Kunci: `{user_keys[chat_id].hex()}`\n"
 
     try:
         with open(file_path, "rb") as f:
