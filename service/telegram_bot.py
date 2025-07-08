@@ -203,7 +203,7 @@ async def process(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE):
             query, context,
             f"✅ *Hasil {mode_label} (Algoritma: {user_crypto_mode[chat_id]}):*\n\n"
             f"{info_key}"
-            f"`{result}`\n\n"
+            f"*Output* `{result}`\n\n"
             f"⏱️ Waktu proses: `{elapsed:.4f} detik` (`{elapsed_ms:.1f} ms`)\n"
             f"🕒 Waktu: `{timestamp}`",
             reply_markup=mode_keyboard(),
